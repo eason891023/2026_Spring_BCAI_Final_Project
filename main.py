@@ -9,7 +9,7 @@ from src.engine.trainer import train_cl_scenario
 def parse_args():
     parser = argparse.ArgumentParser(description="Nested Learning Continual Learning Ablation")
     parser.add_argument('--model', type=str, default='baseline', choices=['baseline', 'cms'], help="Architecture to test")
-    parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam', 'Muon', 'M3', 'SM3'], help="Optimizer to use")
+    parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam', 'Muon', 'M3', 'SM3', 'MSGD', 'MAdam'], help="Optimizer to use")
     parser.add_argument('--epochs', type=int, default=5, help="Epochs per task")
     parser.add_argument('--batch_size', type=int, default=64, help="Batch size")
     parser.add_argument('--lr', type=float, default=1e-3, help="Learning rate")

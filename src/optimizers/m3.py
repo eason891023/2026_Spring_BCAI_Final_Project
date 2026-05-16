@@ -102,10 +102,6 @@ class M3(Optimizer):
                     # STANDARD ADAM: Now correctly applies to the working memory and head
                     denom = state['V'].sqrt().add_(group['eps'])
                     update_direction = (state['M1'] + group['alpha'] * state['O2']) / denom
-
-                # Weight Update: Theta = Theta - lr * (O1 + alpha * O2) / (sqrt(V) + eps)
-                denom = state['V'].sqrt().add_(group['eps'])
-                update_direction = (O1 + group['alpha'] * state['O2']) / denom
                 
                 p.add_(update_direction, alpha=-group['lr'])
 
@@ -117,11 +113,11 @@ class SM3(Optimizer):
     Fixes the unbounded variance and orthogonal-division explosion 
     inherent in the literal translation of the paper's algorithm.
     """
-    def __init__(self, params, lr=1e-3, f=20, beta1=0.9, beta2=0.99, beta3=0.9, alpha=0.5, eps=1e-8, ns_steps=5, use_muon=True):
+    def __init__(self, params, lr=1e-3, f=20, beta1=0.9, beta2=0.99, beta3=0.9, alpha=0.5, eps=1e-8, ns_steps=5, use_muon=True, use_variance=True):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
             
-        defaults = dict(lr=lr, f=f, beta1=beta1, beta2=beta2, beta3=beta3, alpha=alpha, eps=eps, ns_steps=ns_steps)
+        defaults = dict(lr=lr, f=f, beta1=beta1, beta2=beta2, beta3=beta3, alpha=alpha, eps=eps, ns_steps=ns_steps, use_muon=use_muon, use_variance=use_variance)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -172,7 +168,9 @@ class SM3(Optimizer):
                 # --- Inner Loop: Higher-Frequency Iteration ---
                 # Stabilized EMA for First and Second Momentum
                 state['M1'].mul_(group['beta1']).add_(grad, alpha=1.0 - group['beta1'])
-                state['V'].mul_(group['beta2']).addcmul_(grad, grad, value=1.0 - group['beta2'])
+                
+                if group['use_variance']:
+                    state['V'].mul_(group['beta2']).addcmul_(grad, grad, value=1.0 - group['beta2'])
 
                 # FIX: Check for the use_muon flag before orthogonalizing
                 if len(p.shape) >= 2 and group['use_muon']:
@@ -183,9 +181,11 @@ class SM3(Optimizer):
                     
                     update_direction = O1 + group['alpha'] * state['O2']
                 else:
-                    # STANDARD ADAM: Now correctly applies to the working memory and head
-                    denom = state['V'].sqrt().add_(group['eps'])
-                    update_direction = (state['M1'] + group['alpha'] * state['O2']) / denom
+                    if group['use_variance']: # STANDARD ADAM: Now correctly applies to the working memory and head
+                        denom = state['V'].sqrt().add_(group['eps'])
+                        update_direction = (state['M1'] + group['alpha'] * state['O2']) / denom
+                    else: # SGD FALLBACK (No variance division)
+                        update_direction = state['M1'] + group['alpha'] * state['O2']
                 
                 # Apply scaled update
                 p.add_(update_direction, alpha=-group['lr'])

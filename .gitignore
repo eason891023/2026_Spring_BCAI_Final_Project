@@ -221,5 +221,5 @@ __marimo__/
 # repo specific contents
 !data/
 !data/results
-data/results/*
+data/results/*.txt
 data/MNIST
