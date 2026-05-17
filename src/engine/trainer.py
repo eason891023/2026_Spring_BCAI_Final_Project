@@ -22,6 +22,7 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
         # --- Training Phase ---
         model.train()
         for epoch in range(epochs):
+            model.zero_grad()
             for data, target in train_loader:
                 data, target = data.to(device), target.to(device)
                 optimizer.zero_grad()

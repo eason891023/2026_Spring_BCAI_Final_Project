@@ -1,5 +1,6 @@
 # Nested Learning Validation on MLP based Models
 ## Proposal
+> TBD!
 
 ## Project Architecture
 ```plain
@@ -46,14 +47,15 @@ python main.py --model ["cms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', '
 
 **Options:**
 * `--model`: Currently only support `baseline` which is MLP, and `cms` which is MLP with layerwise definition (for different update frequency required by NL).
-* `--optimizer`: Currently support all the above options. Note that `SGD`, `Adam`, and `Muon` in current version works exactly the same on `baseline` models and `cms` models, any kind of performance differences should be coming from random initialization. 
+* `--optimizer`: Currently support all the above options. ~~Note that `SGD`, `Adam`, and `Muon` in current version works exactly the same on `baseline` models and `cms` models, any kind of performance differences should be coming from random initialization.~~ Fixed in this version!
 * `--epochs`: Defines epoch per task. Default: `5`.
 * `--batch_size`: Defines batch sizes. Default: `64`.
 * `--lr`: Defines learning rate. Default: `1e-3` (Note that some optimizer might require higher or lower learning rate to perform best!)
 * `--f`: Defines the number of loops for inner loop before M3/M3S update outer loop. Default: `20`. (Note that this parameter might have different impact depending on the batch size settings!)
 
+> Note that when combining `cms` models with standard optimizers (e.g.: `SGD`, `Adam`, `Muon`) options, the optimizer will be decoupled version of the standard optimizers. Meaning that the weight update will be performed on different level of the MLP layer under different frequencies.
 
 ## To-Do List
 - [x] Implement `multi-scale Adam` (`MAdam`) and `multi-scale SGD` (`MSGD`).
-- [ ] Decouple the update frequency of the outer loop of multi-scale optimizers from the `cms` models.
+- [x] Decouple the update frequency of the outer loop of multi-scale optimizers from the `cms` models. Making the standard optimizers perform differently on `cms` models and `baseline` models.
 - [ ] Make sure the implementations are all correct.
