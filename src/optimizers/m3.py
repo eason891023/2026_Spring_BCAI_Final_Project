@@ -64,11 +64,11 @@ class M3(Optimizer):
                 state['grad_sum'] += grad
 
                 # --- Outer Loop: Lower-Frequency Iteration ---
-                if step % f == 1:
+                if step % f == 0:
                     if group['stabilize']: # Stabilized EMA for Slow Memory: M2 = M2 * beta3 + (1 - beta3) * g
                         state['M2'].mul_(group['beta3']).add_(state['grad_sum'], alpha=1.0 - group['beta3'])
                     else:                  # Original Paper: M2 = M2 + beta3 * g
-                        state['M2'].add_(grad, alpha=group['beta3'])
+                        state['M2'].add_(state['grad_sum'], alpha=group['beta3'])
                     
                     if len(p.shape) >= 2:
                         orig_shape = state['M2'].shape
