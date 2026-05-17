@@ -58,7 +58,7 @@ def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, bet
             ]
             return M3(param_groups, lr=lr)
         else: # FALLBACK FOR BASELINE MODEL
-            return M3(model.parameters(), lr=lr, alpha=1.0, use_muon=False, use_variance=False, stabilize = stabilize)
+            return M3(model.parameters(), lr=lr, f=f, alpha=alpha, beta3=beta3, use_muon=False, use_variance=False, stabilize = stabilize)
     elif opt_name == 'Adam':
         if hasattr(model, 'fast_memory') and hasattr(model, 'slow_memory') and hasattr(model, 'medium_memory'):
             param_groups = [
@@ -84,7 +84,7 @@ def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, bet
             ]
             return M3(param_groups, lr=lr)
         else: # FALLBACK FOR BASELINE MODEL
-            return M3(model.parameters(), lr=lr, alpha=1.0, use_muon=False, use_variance=True, stabilize = stabilize)
+            return M3(model.parameters(), lr=lr, f=f, alpha=alpha, beta3=beta3, use_muon=False, use_variance=True, stabilize = stabilize)
     elif opt_name == 'Muon':
         if hasattr(model, 'fast_memory') and hasattr(model, 'slow_memory') and hasattr(model, 'medium_memory'):
             param_groups = [
@@ -111,7 +111,7 @@ def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, bet
             ]
             return M3(param_groups, lr=lr)
         else: # FALLBACK FOR BASELINE MODE
-            return M3(model.parameters(), lr=lr, alpha=1.0, use_muon=True, use_variance=True, stabilize=True)
+            return M3(model.parameters(), lr=lr, f=f, alpha=alpha, beta3=beta3, use_muon=True, use_variance=True, stabilize=True)
     elif opt_name == 'M3': # Unstabilized Version, the same as the original paper
         if hasattr(model, 'fast_memory') and hasattr(model, 'slow_memory') and hasattr(model, 'medium_memory'):
             param_groups = [
@@ -126,6 +126,6 @@ def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, bet
             ]
             return M3(param_groups, lr=lr)
         else: # FALLBACK FOR BASELINE MODEL
-            return M3(model.parameters(), lr=lr, alpha=1.0, use_muon=True, use_variance=True, stabilize=False)
+            return M3(model.parameters(), lr=lr, f=f, alpha=alpha, beta3=beta3, use_muon=True, use_variance=True, stabilize=False)
     else:
         raise ValueError(f"Unsupported optimizer: {opt_name}")
