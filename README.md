@@ -52,8 +52,9 @@ python main.py --model ["cms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', '
 * `--lr`: Defines learning rate. Default: `1e-3` (Note that some optimizer might require higher or lower learning rate to perform best!)
 * `--f`: Defines the number of loops for inner loop before M3/M3S update outer loop. Default: `20`. (Note that this parameter might have different impact depending on the batch size settings!)
 
-> [!NOTE] Note on `cms` model with standard optimizers
-> Note that when combining `cms` models with standard optimizers (e.g.: `SGD`, `Adam`, `Muon`) options, the optimizer will be decoupled version of the standard optimizers. Meaning that the weight update will be performed on different level of the MLP layer under different frequencies.
+> [!NOTE] 
+> **Note on `cms` model with standard optimizers**
+> When combining `cms` models with standard optimizers (e.g.: `SGD`, `Adam`, `Muon`) options, the optimizer will be decoupled version of the standard optimizers. Meaning that the weight update will be performed on different level of the MLP layer under different frequencies.
 
 ## To-Do List
 - [x] Implement `multi-scale Adam` (`MAdam`) and `multi-scale SGD` (`MSGD`).
