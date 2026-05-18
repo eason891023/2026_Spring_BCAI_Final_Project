@@ -39,7 +39,7 @@ pip install -r requirements.txt
 ## Usage
 > make sure to setup the environment first and activate the virtual environment before running the following commands.
 ```bash
-python main.py --model ["cms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam']
+python main.py --model ["scms", "icms", "ncms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam']
 ```
 > Please choose only one option at once from the `[...]` in the options listed above! E.g.: `python main.py --model baseline --optimizer SGD` would be fine!
 
@@ -58,7 +58,7 @@ python main.py --model ["cms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', '
   * **Non-Stabilized (e.g., `M3`):** Acts as a direct additive multiplier to match the literal pseudo-code of the original paper ($M = M + \beta_3 g$). *Warning: This unbounded accumulation can cause infinite memory horizons, gradient explosions, or vanishing effective learning rates over long training sequences.* * Default: `0.9`.
 
 > [!NOTE] 
-> **Note:** Standard optimizers will automatically utilize a Decoupled Wrapper when paired with the `cms` model, enforcing the layer-wise update frequencies without applying complex momentum math.
+> **Note:** Standard optimizers will automatically utilize a Decoupled Wrapper when paired with the `cms` variant models (including `scms`, `ncms` and `icms`), enforcing the layer-wise update frequencies without applying complex momentum math.
 
 ### To Record the Result into `.txt` files
 Consider using redirect operator! For example:
@@ -69,5 +69,6 @@ python main.py --model baseline --optimizer SGD > data/results/baseline_sgd.txt
 ## To-Do List
 - [x] Implement `multi-scale Adam` (`MAdam`) and `multi-scale SGD` (`MSGD`).
 - [x] Decouple the update frequency of the outer loop of multi-scale optimizers from the `cms` models. Making the standard optimizers perform differently on `cms` models and `baseline` models.
+- [x] Add implementation for different kinds of `cms` models mentioned in the original research paper.
 - [ ] Add more options to `main.py` to enable script-based hyperparameter sweep test.
 - [ ] Make sure the implementations are all correct.

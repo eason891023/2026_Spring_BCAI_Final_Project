@@ -3,12 +3,12 @@ import torch
 import numpy as np
 from src.data.split_mnist import get_split_mnist
 from src.models.baseline import BaselineMLP
-from src.models.cms_mlp import CMS_MLP
+from src.models.cms_mlp import SCMS_MLP, NCMS_MLP, ICMS_MLP
 from src.engine.trainer import train_cl_scenario
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Nested Learning Continual Learning Ablation")
-    parser.add_argument('--model', type=str, default='baseline', choices=['baseline', 'cms'], help="Architecture to test")
+    parser.add_argument('--model', type=str, default='baseline', choices=['baseline', 'scms', 'ncms', 'icms'], help="Architecture to test")
     parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam'], help="Optimizer to use")
     parser.add_argument('--epochs', type=int, default=5, help="Epochs per task")
     parser.add_argument('--batch_size', type=int, default=64, help="Batch size")
@@ -31,8 +31,14 @@ def main():
     # 2. Initialize Architecture
     if args.model == 'baseline':
         model = BaselineMLP()
-    elif args.model == 'cms':
-        model = CMS_MLP()
+    elif args.model == 'scms':
+        model = SCMS_MLP()
+    elif args.model == 'ncms':
+        model = NCMS_MLP()
+    elif args.model == 'icms':
+        model = ICMS_MLP()
+    else:
+        raise NotImplementedError("Currently Not implemented to support other model architectures!")
         
     # 3. Execute Scenario
     results = train_cl_scenario(
