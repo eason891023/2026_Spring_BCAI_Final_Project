@@ -1,4 +1,4 @@
-# Nested Learning Validation on MLP based Models
+# Nested Learning on MLP based Models
 ## Proposal
 > TBD!
 
