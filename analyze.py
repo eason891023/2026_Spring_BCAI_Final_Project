@@ -33,7 +33,7 @@ def generate_summary_table():
             "Model": run["model"],
             "Optimizer": run["optimizer"],
             "f": run["f"],
-            "Stabilized": run["stab"],
+            "Stabilized": run["stabilized"],
             "Alpha": run["alpha"],
             "Beta3": run["beta3"]
         }
