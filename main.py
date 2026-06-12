@@ -1,15 +1,20 @@
 import argparse
+import random
 import torch
 import numpy as np
 import os
 import json
-from src.data.split_mnist import get_split_mnist
+from src.data import get_dataset
 from src.models.baseline import BaselineMLP
 from src.models.cms_mlp import SCMS_MLP, NCMS_MLP, ICMS_MLP
 from src.engine.trainer import train_cl_scenario
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Nested Learning Continual Learning Ablation")
+    parser.add_argument('--dataset', type=str, default='split', choices=['split', 'permuted', 'rotating'], help="CL scenario: split (Class-IL), permuted/rotating (Domain-IL)")
+    parser.add_argument('--num_tasks', type=int, default=10, help="Number of tasks for permuted/rotating (split is fixed at 5)")
+    parser.add_argument('--angle_step', type=int, default=15, help="[rotating] Rotation angle increment per task (degrees)")
+    parser.add_argument('--seed', type=int, default=42, help="Random seed (also derives the permutation sequence)")
     parser.add_argument('--model', type=str, default='baseline', choices=['baseline', 'scms', 'ncms', 'icms'], help="Architecture to test")
     parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam'], help="Optimizer to use")
     parser.add_argument('--epochs', type=int, default=5, help="Epochs per task")
@@ -22,18 +27,43 @@ def parse_args():
     parser.add_argument('--meta_lr', type=float, default=0.5, help="[ncms] Reptile step size for the meta-learned inits (Eq. 72 first-order approx)")
     parser.add_argument('--medium_period', type=int, default=2, help="[ncms] Reset the medium level every N contexts (tasks)")
     parser.add_argument('--reset_mode', type=str, default='meta', choices=['meta', 'random', 'none'], help="[ncms] What to reset fast levels to at context boundaries")
+    parser.add_argument('--save_ckpt', type=int, default=1, help="Save model state at each task boundary (needed for probing/relearning analyses)")
     return parser.parse_args()
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+def print_metrics(title, metrics):
+    print("\n" + "="*50)
+    print(f"FINAL EVALUATION METRICS ({title})")
+    print("="*50)
+    print("Accuracy Matrix (R):")
+    print(metrics['Accuracy_Matrix'])
+    print(f"\nAverage Accuracy: {metrics['Average_ACC']:.4f}")
+    print(f"Average Forgetting: {metrics['Forgetting']:.4f}")
+    print(f"Backward Transfer (BWT): {metrics['BWT']:.4f}")
 
 def main():
     args = parse_args()
-    
+    set_seed(args.seed)
+
     # Dynamic device selection (supports CUDA and macOS MPS)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     print(f"Initializing Experiment on device: {device}")
-    
+
     # 1. Load Data
-    tasks_train, tasks_test = get_split_mnist(batch_size=args.batch_size)
-    
+    tasks_train, tasks_test, task_classes, scenario = get_dataset(
+        args.dataset,
+        batch_size=args.batch_size,
+        num_tasks=args.num_tasks,
+        seed=args.seed,
+        angle_step=args.angle_step
+    )
+    print(f"Dataset: {args.dataset} ({scenario}) | Tasks: {len(tasks_train)}")
+
     # 2. Initialize Architecture
     if args.model == 'baseline':
         model = BaselineMLP()
@@ -45,7 +75,14 @@ def main():
         model = ICMS_MLP()
     else:
         raise NotImplementedError("Currently Not implemented to support other model architectures!")
-        
+
+    # Construct a unique prefix for the files
+    file_prefix = f"{args.dataset}_{args.model}_{args.optimizer}_f{args.f}_a{args.alpha}_b{args.beta3}_s{args.stab}_sd{args.seed}"
+    if args.model == 'ncms':
+        file_prefix += f"_r{args.reset_mode}_ml{args.meta_lr}_mp{args.medium_period}"
+
+    ckpt_dir = os.path.join("data", "results", "checkpoints", file_prefix) if args.save_ckpt else None
+
     # 3. Execute Scenario
     results = train_cl_scenario(
         model=model,
@@ -58,49 +95,37 @@ def main():
         f=args.f,
         alpha=args.alpha,
         beta3=args.beta3,
-        stab=bool(args.stab)
+        stab=bool(args.stab),
+        task_classes=task_classes,
+        ckpt_dir=ckpt_dir
     )
-    
+
     # 4. Report Metrics
-    print("\n" + "="*50)
-    print("FINAL EVALUATION METRICS (CLASS-IL)")
-    print("="*50)
     np.set_printoptions(precision=4, suppress=True)
-    print("Accuracy Matrix (R):")
-    print(results['CIL']['Accuracy_Matrix'])
-    print(f"\nAverage Accuracy: {results['CIL']['Average_ACC']:.4f}")
-    print(f"Average Forgetting: {results['CIL']['Forgetting']:.4f}")
-    print(f"Backward Transfer (BWT): {results['CIL']['BWT']:.4f}")
-    
-    print("\n" + "="*50)
-    print("FINAL EVALUATION METRICS (TASK-IL)")
-    print("="*50)
-    print("Accuracy Matrix (R):")
-    print(results['TIL']['Accuracy_Matrix'])
-    print(f"\nAverage Accuracy: {results['TIL']['Average_ACC']:.4f}")
-    print(f"Average Forgetting: {results['TIL']['Forgetting']:.4f}")
-    print(f"Backward Transfer (BWT): {results['TIL']['BWT']:.4f}")
+    print_metrics("CLASS-IL", results['CIL'])
+    if results['TIL'] is not None:
+        print_metrics("TASK-IL", results['TIL'])
     print("="*50)
 
     # 5. Automated Data Export
     metrics_dir = os.path.join("data", "results", "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
-    
-    # Construct a unique prefix for the files
-    file_prefix = f"{args.model}_{args.optimizer}_f{args.f}_a{args.alpha}_b{args.beta3}_s{args.stab}"
-    if args.model == 'ncms':
-        file_prefix += f"_r{args.reset_mode}_ml{args.meta_lr}_mp{args.medium_period}"
-    
+
     # Export Standard Matrices to CSV (For Heatmaps and Summaries)
     results['evaluator_cil'].export_matrix_to_csv(os.path.join(metrics_dir, f"{file_prefix}_CIL.csv"))
-    results['evaluator_til'].export_matrix_to_csv(os.path.join(metrics_dir, f"{file_prefix}_TIL.csv"))
-    
     # Export High-Resolution History to CSV (For Line Graphs)
     results['evaluator_cil'].export_history_to_csv(os.path.join(metrics_dir, f"{file_prefix}_CIL_history.csv"))
-    results['evaluator_til'].export_history_to_csv(os.path.join(metrics_dir, f"{file_prefix}_TIL_history.csv"))
-    
+
+    if results['evaluator_til'] is not None:
+        results['evaluator_til'].export_matrix_to_csv(os.path.join(metrics_dir, f"{file_prefix}_TIL.csv"))
+        results['evaluator_til'].export_history_to_csv(os.path.join(metrics_dir, f"{file_prefix}_TIL_history.csv"))
+
     # Compile Summary Record
     summary_record = {
+        "dataset": args.dataset,
+        "scenario": scenario,
+        "num_tasks": len(tasks_train),
+        "seed": args.seed,
         "model": args.model,
         "optimizer": args.optimizer,
         "f": args.f,
@@ -112,9 +137,9 @@ def main():
         "lr": args.lr,
         "ncms": {"reset_mode": args.reset_mode, "meta_lr": args.meta_lr, "medium_period": args.medium_period} if args.model == 'ncms' else None,
         "CIL": results['evaluator_cil'].export_summary_dict(),
-        "TIL": results['evaluator_til'].export_summary_dict()
+        "TIL": results['evaluator_til'].export_summary_dict() if results['evaluator_til'] is not None else None
     }
-    
+
     # Safely append to the JSON file
     json_path = os.path.join(metrics_dir, "summary_metrics.json")
     if os.path.exists(json_path):
@@ -125,13 +150,15 @@ def main():
                 data_log = []
     else:
         data_log = []
-        
+
     data_log.append(summary_record)
-    
+
     with open(json_path, 'w') as f:
         json.dump(data_log, f, indent=4)
-        
+
     print(f"\n[INFO] Data successfully exported to {metrics_dir}/")
+    if ckpt_dir:
+        print(f"[INFO] Task-boundary checkpoints saved to {ckpt_dir}/")
 
 if __name__ == "__main__":
     main()

@@ -30,6 +30,9 @@ def generate_summary_table():
     records = []
     for run in data:
         base_info = {
+            # .get keeps backwards compatibility with pre--dataset-flag entries
+            "Dataset": run.get("dataset", "split"),
+            "Seed": run.get("seed", "n/a"),
             "Model": run["model"],
             "Optimizer": run["optimizer"],
             "f": run["f"],
@@ -40,16 +43,17 @@ def generate_summary_table():
         # Add CIL Metrics
         for metric, val in run["CIL"].items():
             records.append({**base_info, "Evaluation": "Class-IL", "Metric": metric, "Value": val})
-        # Add TIL Metrics
-        for metric, val in run["TIL"].items():
-            records.append({**base_info, "Evaluation": "Task-IL", "Metric": metric, "Value": val})
+        # Add TIL Metrics (absent for Domain-IL runs)
+        if run.get("TIL") is not None:
+            for metric, val in run["TIL"].items():
+                records.append({**base_info, "Evaluation": "Task-IL", "Metric": metric, "Value": val})
 
     df = pd.DataFrame(records)
-    
-    # Pivot for a beautiful terminal view
+
+    # Pivot for a beautiful terminal view (mean over seeds)
     pivot_df = df.pivot_table(
-        index=["Model", "Optimizer", "f"], 
-        columns=["Evaluation", "Metric"], 
+        index=["Dataset", "Model", "Optimizer", "f"],
+        columns=["Evaluation", "Metric"],
         values="Value"
     ).round(4)
     
@@ -66,30 +70,33 @@ def plot_bar_charts(df):
     if df is None or df.empty:
         return
 
-    # Filter for the key metrics
-    for metric in ["Average_ACC", "Forgetting"]:
-        plt.figure(figsize=(10, 6))
-        subset = df[df["Metric"] == metric]
-        
-        # Create a grouped bar chart
-        ax = sns.barplot(
-            data=subset, 
-            x="Optimizer", 
-            y="Value", 
-            hue="Model", 
-            errorbar=None,
-            palette="viridis"
-        )
-        
-        plt.title(f"{metric} Comparison Across Architectures", pad=20, fontweight='bold')
-        plt.ylabel(metric)
-        plt.xlabel("Optimizer")
-        plt.legend(title="Architecture")
-        plt.tight_layout()
-        
-        # Save plot
-        plt.savefig(os.path.join(PLOTS_DIR, f"bar_chart_{metric}.png"), dpi=300)
-        plt.close()
+    # One figure per dataset x evaluation so CIL and DIL results are never mixed
+    for (dataset, evaluation) in df[["Dataset", "Evaluation"]].drop_duplicates().itertuples(index=False):
+        for metric in ["Average_ACC", "Forgetting"]:
+            subset = df[(df["Metric"] == metric) & (df["Dataset"] == dataset) & (df["Evaluation"] == evaluation)]
+            if subset.empty:
+                continue
+
+            plt.figure(figsize=(10, 6))
+            # errorbar='sd' shows the spread across seeds
+            ax = sns.barplot(
+                data=subset,
+                x="Optimizer",
+                y="Value",
+                hue="Model",
+                errorbar="sd",
+                palette="viridis"
+            )
+
+            plt.title(f"{dataset} ({evaluation}) — {metric}", pad=20, fontweight='bold')
+            plt.ylabel(metric)
+            plt.xlabel("Optimizer")
+            plt.legend(title="Architecture")
+            plt.tight_layout()
+
+            eval_tag = evaluation.replace("-", "")
+            plt.savefig(os.path.join(PLOTS_DIR, f"bar_chart_{dataset}_{eval_tag}_{metric}.png"), dpi=300)
+            plt.close()
     print("[INFO] Bar charts generated.")
 
 def plot_learning_dynamics():
@@ -155,8 +162,11 @@ def plot_learning_dynamics():
         plt.ylim(0, 1.1)
         plt.xlim(1, total_epochs)
         
-        # Format X-axis to show every epoch, but prioritize task boundaries
-        plt.xticks(range(1, total_epochs + 1))
+        # Format X-axis: every epoch when short, task boundaries only when long
+        if total_epochs <= 30:
+            plt.xticks(range(1, total_epochs + 1))
+        else:
+            plt.xticks([1] + [i * epochs_per_task for i in range(1, num_tasks + 1)])
         
         plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
         plt.grid(True, linestyle=':', alpha=0.6)
