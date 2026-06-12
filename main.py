@@ -19,6 +19,9 @@ def parse_args():
     parser.add_argument('--alpha', type=float, default=0.5, help="Alpha multiplier for slow memory")
     parser.add_argument('--beta3', type=float, default=0.9, help="Beta3 EMA rate for slow memory")
     parser.add_argument('--stab', type=int, default=1, help="Stabilized Version of multiscale optimizer or not.")
+    parser.add_argument('--meta_lr', type=float, default=0.5, help="[ncms] Reptile step size for the meta-learned inits (Eq. 72 first-order approx)")
+    parser.add_argument('--medium_period', type=int, default=2, help="[ncms] Reset the medium level every N contexts (tasks)")
+    parser.add_argument('--reset_mode', type=str, default='meta', choices=['meta', 'random', 'none'], help="[ncms] What to reset fast levels to at context boundaries")
     return parser.parse_args()
 
 def main():
@@ -37,7 +40,7 @@ def main():
     elif args.model == 'scms':
         model = SCMS_MLP()
     elif args.model == 'ncms':
-        model = NCMS_MLP()
+        model = NCMS_MLP(meta_lr=args.meta_lr, medium_period=args.medium_period, reset_mode=args.reset_mode)
     elif args.model == 'icms':
         model = ICMS_MLP()
     else:
@@ -85,6 +88,8 @@ def main():
     
     # Construct a unique prefix for the files
     file_prefix = f"{args.model}_{args.optimizer}_f{args.f}_a{args.alpha}_b{args.beta3}_s{args.stab}"
+    if args.model == 'ncms':
+        file_prefix += f"_r{args.reset_mode}_ml{args.meta_lr}_mp{args.medium_period}"
     
     # Export Standard Matrices to CSV (For Heatmaps and Summaries)
     results['evaluator_cil'].export_matrix_to_csv(os.path.join(metrics_dir, f"{file_prefix}_CIL.csv"))
@@ -105,6 +110,7 @@ def main():
         "epochs": args.epochs,
         "steps_per_epoch": results['steps_per_epoch'],
         "lr": args.lr,
+        "ncms": {"reset_mode": args.reset_mode, "meta_lr": args.meta_lr, "medium_period": args.medium_period} if args.model == 'ncms' else None,
         "CIL": results['evaluator_cil'].export_summary_dict(),
         "TIL": results['evaluator_til'].export_summary_dict()
     }

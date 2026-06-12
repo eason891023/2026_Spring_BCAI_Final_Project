@@ -80,6 +80,12 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
             # Advance absolute time
             global_epoch += 1
 
+        # Nested CMS context boundary (Eq. 72): meta-update the learned inits
+        # and reset the fast levels before the next task starts. Skipped after
+        # the final task so the returned model keeps its adapted weights.
+        if task_id < num_tasks - 1 and hasattr(model, 'end_context'):
+            model.end_context()
+
     return {
         'CIL': evaluator_cil.compute_metrics(),
         'TIL': evaluator_til.compute_metrics(),
