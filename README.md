@@ -9,16 +9,21 @@ nested_learning_sandbox/
 ├── requirements.txt        # Core dependencies
 ├── main.py                 # The CLI entry point for running specific ablation phases
 ├── analyze.py              # Data visualization and metric summary pipeline
+├── scripts/
+│   └── run_baseline_grid.sh # Phase 0 baseline sweep (datasets x models x optimizers x seeds)
 ├── data/                   
 │   └── results/            # Auto-generated outputs
 │       ├── raw_log/        # Terminal stdout records
 │       ├── metrics/        # epochwise-recorded CSVs and JSON summaries
+│       ├── checkpoints/    # Task-boundary model snapshots (for probing/relearning analyses)
 │       └── plots/          # Charts and heatmaps
 └── src/                    # Main source code directory
     ├── __init__.py
     ├── data/               # Data ingestion and task splitting
-    │   ├── __init__.py
-    │   └── split_mnist.py
+    │   ├── __init__.py     # get_dataset(): unified entry point (returns task class maps + scenario)
+    │   ├── split_mnist.py    # Split-MNIST   (Class-IL:  5 tasks, 2 classes each)
+    │   ├── permuted_mnist.py # Permuted-MNIST (Domain-IL: fixed pixel permutation per task)
+    │   └── rotating_mnist.py # Rotating-MNIST (Domain-IL: gradual rotation drift per task)
     ├── models/             # Network architectures
     │   ├── __init__.py
     │   ├── baseline.py     # Standard monolithic MLP
@@ -48,12 +53,17 @@ pip install -r requirements.txt
 ### 1. Manual Single Runs
 
 ```bash
-python main.py --model ["scms", "icms", "ncms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam']
+python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "icms", "ncms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam']
 ```
 
-> Please choose only one option at once from the `[...]` in the options listed above! E.g.: `python main.py --model baseline --optimizer SGD`
+> Please choose only one option at once from the `[...]` in the options listed above! E.g.: `python main.py --dataset split --model baseline --optimizer SGD`
 
 **Universal Core Options:**
+* `--dataset`: The CL scenario. `split` (Split-MNIST, Class-IL), `permuted` (Permuted-MNIST, Domain-IL), or `rotating` (Rotating-MNIST, gradual Domain-IL). Default: `split`. *(Domain-IL runs skip the Task-IL masked evaluation, since the label space is shared across tasks.)*
+* `--num_tasks`: Number of tasks for `permuted` / `rotating` (`split` is fixed at 5). Default: `10`.
+* `--angle_step`: [rotating] Rotation increment per task in degrees. Default: `15`.
+* `--seed`: Random seed; also derives the permutation sequence for `permuted`. Default: `42`.
+* `--save_ckpt`: Save a model snapshot at every task boundary to `data/results/checkpoints/` (required by downstream probing/relearning analyses). Default: `1`.
 * `--model`: The network architecture. Choose `baseline` (Standard monolithic MLP) or `cms` (including three variants: `scms`, `ncms`, and `icms`).
 * `--optimizer`: The optimization engine. Supports standard (`SGD`, `Adam`, `Muon`) and Multi-scale (`M3`, `M3S`, `MSGD`, `MAdam`) algorithms.
 * `--epochs`: Training epochs per task. Default: `5`.
@@ -71,7 +81,15 @@ python main.py --model ["scms", "icms", "ncms", "baseline"] --optimizer ['SGD', 
 > [!NOTE]
 > **Note:** Standard optimizers will automatically utilize a Decoupled Wrapper when paired with the `cms` variant models (including `scms`, `ncms` and `icms`), enforcing the module-wise update frequencies without applying complex momentum math.
 
-### 2. Data Analysis & Visualization
+### 2. Batch Baseline Sweeps
+
+```bash
+bash scripts/run_baseline_grid.sh "42 123 7"
+```
+
+Runs the full Phase 0 grid ({split, permuted} × {baseline, scms, ncms, icms} × {SGD, Adam, M3, M3S}) for each given seed, logging stdout to `data/results/raw_log/`.
+
+### 3. Data Analysis & Visualization
 
 To generate publication-ready artifacts from your experimental data, run:
 
