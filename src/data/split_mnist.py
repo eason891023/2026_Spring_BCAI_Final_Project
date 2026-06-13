@@ -16,10 +16,11 @@ def get_split_mnist(batch_size=64, data_dir='./data'):
     train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
     test_dataset = datasets.MNIST(data_dir, train=False, download=True, transform=transform)
     
-    tasks_train, tasks_test = [], []
+    tasks_train, tasks_test, task_classes = [], [], []
     
     for t in range(5):
         classes = [t * 2, t * 2 + 1]
+        task_classes.append(classes)
         
         # Isolate indices for the current task's classes
         train_idx = np.isin(train_dataset.targets.numpy(), classes)
@@ -36,4 +37,4 @@ def get_split_mnist(batch_size=64, data_dir='./data'):
             shuffle=False
         ))
         
-    return tasks_train, tasks_test
+    return tasks_train, tasks_test, task_classes

@@ -3,7 +3,7 @@ import torch.nn as nn
 from .metrics import CLEvaluator
 from src.optimizers.factory import get_optimizer
 
-def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', epochs=5, lr=1e-3, f=20, alpha=0.5, beta3=0.9, stab=True):
+def train_cl_scenario(model, tasks_train, tasks_test, task_classes, device, opt_name='SGD', epochs=5, lr=1e-3, f=20, alpha=0.5, beta3=0.9, stab=True):
     """Executes the continual learning loop across all tasks, evaluating both CIL and TIL."""
     model = model.to(device)
     optimizer = get_optimizer(model, opt_name, lr=lr, f=f, stabilize=stab, alpha=alpha, beta3=beta3)
@@ -24,7 +24,8 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
         train_loader = tasks_train[task_id]
         steps_per_epoch = len(train_loader)
 
-        print(f"\n[ Task {task_id + 1}/{num_tasks} | Optimizer: {opt_name} | Steps/Epoch: {steps_per_epoch} ]")
+        classes_str = ", ".join(map(str, task_classes[task_id]))
+        print(f"\n[ Task {task_id + 1}/{num_tasks} ({classes_str}) | Optimizer: {opt_name} | Steps/Epoch: {steps_per_epoch} ]")
         
         model.zero_grad()
         # --- Training Phase ---
@@ -46,7 +47,7 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
                     test_loader = tasks_test[eval_id]
                     correct_cil, correct_til, total = 0, 0, 0
                     
-                    valid_classes = [eval_id * 2, eval_id * 2 + 1]
+                    valid_classes = task_classes[eval_id]
                     
                     for data, target in test_loader:
                         data, target = data.to(device), target.to(device)

@@ -4,12 +4,14 @@ import numpy as np
 import os
 import json
 from src.data.split_mnist import get_split_mnist
+from src.data.permute_mnist import get_permuted_mnist
 from src.models.baseline import BaselineMLP
 from src.models.cms_mlp import SCMS_MLP, NCMS_MLP, ICMS_MLP
 from src.engine.trainer import train_cl_scenario
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Nested Learning Continual Learning Ablation")
+    parser.add_argument('--dataset', type=str, default='split_mnist', choices=['split_mnist', 'permuted_mnist'], help="Dataset scenario to run")
     parser.add_argument('--model', type=str, default='baseline', choices=['baseline', 'scms', 'ncms', 'icms'], help="Architecture to test")
     parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam'], help="Optimizer to use")
     parser.add_argument('--epochs', type=int, default=5, help="Epochs per task")
@@ -29,7 +31,12 @@ def main():
     print(f"Initializing Experiment on device: {device}")
     
     # 1. Load Data
-    tasks_train, tasks_test = get_split_mnist(batch_size=args.batch_size)
+    if args.dataset == 'split_mnist':
+        tasks_train, tasks_test, task_classes = get_split_mnist(batch_size=args.batch_size)
+    elif args.dataset == 'permuted_mnist':
+        tasks_train, tasks_test, task_classes = get_permuted_mnist(batch_size=args.batch_size)
+    else:
+        raise ValueError("Unknown dataset")
     
     # 2. Initialize Architecture
     if args.model == 'baseline':
@@ -48,6 +55,7 @@ def main():
         model=model,
         tasks_train=tasks_train,
         tasks_test=tasks_test,
+        task_classes=task_classes,
         device=device,
         opt_name=args.optimizer,
         epochs=args.epochs,
@@ -84,7 +92,7 @@ def main():
     os.makedirs(metrics_dir, exist_ok=True)
     
     # Construct a unique prefix for the files
-    file_prefix = f"{args.model}_{args.optimizer}_f{args.f}_a{args.alpha}_b{args.beta3}_s{args.stab}"
+    file_prefix = f"{args.dataset}_{args.model}_{args.optimizer}_f{args.f}_a{args.alpha}_b{args.beta3}_s{args.stab}"
     
     # Export Standard Matrices to CSV (For Heatmaps and Summaries)
     results['evaluator_cil'].export_matrix_to_csv(os.path.join(metrics_dir, f"{file_prefix}_CIL.csv"))
@@ -96,6 +104,7 @@ def main():
     
     # Compile Summary Record
     summary_record = {
+        "dataset": args.dataset,
         "model": args.model,
         "optimizer": args.optimizer,
         "f": args.f,
