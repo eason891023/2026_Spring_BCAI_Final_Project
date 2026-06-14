@@ -59,6 +59,7 @@ python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "icm
 > Please choose only one option at once from the `[...]` in the options listed above! E.g.: `python main.py --dataset split --model baseline --optimizer SGD`
 
 **Universal Core Options:**
+* `--config`: Path to a YAML configuration file. Supports native parameter sweeping if you define parameters as lists (e.g., `seed: [42, 43]`).
 * `--dataset`: The CL scenario. `split` (Split-MNIST, Class-IL), `permuted` (Permuted-MNIST, Domain-IL), or `rotating` (Rotating-MNIST, gradual Domain-IL). Default: `split`. *(Domain-IL runs skip the Task-IL masked evaluation, since the label space is shared across tasks.)*
 * `--num_tasks`: Number of tasks for `permuted` / `rotating` (`split` is fixed at 5). Default: `10`.
 * `--angle_step`: [rotating] Rotation increment per task in degrees. Default: `15`.
@@ -67,6 +68,7 @@ python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "icm
 * `--model`: The network architecture. Choose `baseline` (Standard monolithic MLP) or `cms` (including three variants: `scms`, `ncms`, and `icms`).
 * `--optimizer`: The optimization engine. Supports standard (`SGD`, `Adam`, `Muon`) and Multi-scale (`M3`, `M3S`, `MSGD`, `MAdam`) algorithms.
 * `--epochs`: Training epochs per task. Default: `5`.
+* `--eval_every`: Evaluate the model every N steps, enabling high-resolution tracking of catastrophic forgetting mid-epoch. Default: `200`.
 * `--batch_size`: Batch size for the dataloaders. Default: `64`.
 * `--lr`: Base learning rate. Default: `1e-3`. *(Tip: Orthogonalizing optimizers like Muon and M3 often require lower learning rates than Adam/SGD).*
 
@@ -89,7 +91,32 @@ bash scripts/run_baseline_grid.sh "42 123 7"
 
 Runs the full Phase 0 grid ({split, permuted} × {baseline, scms, ncms, icms} × {SGD, Adam, M3, M3S}) for each given seed, logging stdout to `data/results/raw_log/`.
 
-### 3. Data Analysis & Visualization
+### 3. Native YAML Parameter Sweeping
+
+You can natively execute massive ablation studies directly in `main.py` using a YAML configuration file. 
+If you define parameters as lists within the YAML file, the script will automatically calculate the Cartesian product of all parameters and run them sequentially.
+
+```bash
+python main.py --config configs/dil_experiment.yaml
+```
+
+**Example YAML:**
+```yaml
+dataset: 
+  - "permuted"
+model: 
+  - "baseline"
+  - "ncms"
+optimizer: 
+  - "SGD"
+  - "Adam"
+seed:
+  - 42
+  - 43
+```
+*This config will automatically execute an 8-run grid search!*
+
+### 4. Data Analysis & Visualization
 
 To generate publication-ready artifacts from your experimental data, run:
 
@@ -102,7 +129,7 @@ This script reads the exported JSON and CSVs to generate:
 
 * **Summary Tables:** A formatted terminal printout comparing Average Accuracy and Forgetting across all runs.
 * **Heatmaps:** $T \times T$ Class-IL and Task-IL matrix visualizations showcasing representational retention and "Softmax Suppression".
-* **Line Graphs:** Epoch-by-epoch learning dynamics to visually showcase the effect of forgetting and learning.
+* **Line Graphs:** High-resolution Step-Level learning dynamics, including an auto-smoothed variant, to showcase the exact moment forgetting and learning occurs mid-epoch.
 * *Plots are saved directly to `data/results/plots/`.*
 
 ## To-Do List
