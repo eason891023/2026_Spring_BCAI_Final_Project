@@ -2,25 +2,23 @@ import numpy as np
 import os
 
 class CLEvaluator:
-    # NEW: Added total_epochs parameter (default 25 = 5 tasks * 5 epochs)
-    def __init__(self, num_tasks=5, total_epochs=25):
+    def __init__(self, num_tasks=5):
         self.num_tasks = num_tasks
-        self.total_epochs = total_epochs
         
         # Initialize the T x T Accuracy Matrix (R) for standard task boundaries
         self.R = np.zeros((num_tasks, num_tasks))
         
-        # Initialize the E x T History Matrix for high-resolution tracking
-        # We fill it with NaN (Not a Number) so un-trained tasks don't plot as 0s
-        self.history = np.full((total_epochs, num_tasks), np.nan)
+        # Initialize dynamic history list for high-resolution tracking
+        # Records will be tuples: (global_step, eval_task_id, accuracy)
+        self.history_records = []
         
     def update_matrix(self, train_task_id, eval_task_id, accuracy):
         """Records accuracy at strict task boundaries."""
         self.R[train_task_id, eval_task_id] = accuracy
         
-    def update_history(self, global_epoch, eval_task_id, accuracy):
-        """Records accuracy at the end of every single epoch."""
-        self.history[global_epoch, eval_task_id] = accuracy
+    def update_history(self, global_step, eval_task_id, accuracy):
+        """Records accuracy at the specified global step."""
+        self.history_records.append((global_step, eval_task_id, accuracy))
         
     def compute_metrics(self):
         """Calculates final Average ACC, BWT, and Average Forgetting."""
@@ -51,9 +49,27 @@ class CLEvaluator:
 
     # History Export Method
     def export_history_to_csv(self, filepath):
-        """Exports the high-resolution E x T history matrix."""
+        """Exports the high-resolution history matrix with global_step as the first column."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        np.savetxt(filepath, self.history, delimiter=",", fmt="%.4f")
+        if not self.history_records:
+            return
+            
+        import pandas as pd
+        df = pd.DataFrame(self.history_records, columns=['global_step', 'task_id', 'accuracy'])
+        
+        # Pivot so each row is a unique global_step and columns are task IDs
+        pivot_df = df.pivot_table(index='global_step', columns='task_id', values='accuracy')
+        
+        # Ensure all columns from 0 to num_tasks-1 exist
+        for t in range(self.num_tasks):
+            if t not in pivot_df.columns:
+                pivot_df[t] = np.nan
+        
+        # Sort columns to maintain order
+        pivot_df = pivot_df[sorted(pivot_df.columns)]
+        
+        # Save to CSV (first column will be global_step, subsequent columns are accuracies)
+        pivot_df.to_csv(filepath, header=False, na_rep='nan')
 
     def export_summary_dict(self):
         """Returns scalar metrics ready for JSON serialization."""

@@ -5,7 +5,7 @@ from .metrics import CLEvaluator
 from src.optimizers.factory import get_optimizer
 
 def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', epochs=5, lr=1e-3,
-                      f=20, alpha=0.5, beta3=0.9, stab=True, task_classes=None, ckpt_dir=None):
+                      f=20, alpha=0.5, beta3=0.9, stab=True, task_classes=None, ckpt_dir=None, eval_every=200):
     """Executes the continual learning loop across all tasks.
 
     task_classes: per-task class lists used for the Task-IL masked evaluation
@@ -21,17 +21,14 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
     criterion = nn.CrossEntropyLoss()
 
     num_tasks = len(tasks_train)
-    total_epochs = num_tasks * epochs # Calculate total epochs for the history matrix
     eval_til = task_classes is not None
-
-    # Instantiate evaluators with the new total_epochs parameter
-    evaluator_cil = CLEvaluator(num_tasks=num_tasks, total_epochs=total_epochs)
-    evaluator_til = CLEvaluator(num_tasks=num_tasks, total_epochs=total_epochs) if eval_til else None
+    evaluator_cil = CLEvaluator(num_tasks=num_tasks)
+    evaluator_til = CLEvaluator(num_tasks=num_tasks) if eval_til else None
 
     if ckpt_dir is not None:
         os.makedirs(ckpt_dir, exist_ok=True)
 
-    global_epoch = 0 # Tracks absolute time across all task transitions
+    global_step = 0 # Tracks absolute gradient steps across all task transitions
 
     steps_per_epoch = 0
 
@@ -41,20 +38,7 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
 
         print(f"\n[ Task {task_id + 1}/{num_tasks} | Optimizer: {opt_name} | Steps/Epoch: {steps_per_epoch} ]")
 
-        model.zero_grad()
-        # --- Training Phase ---
-        for epoch in range(epochs):
-            model.train() # Make sure to set train mode inside the epoch loop
-
-            for data, target in train_loader:
-                data, target = data.to(device), target.to(device)
-                optimizer.zero_grad()
-                output = model(data)
-                loss = criterion(output, target)
-                loss.backward()
-                optimizer.step()
-
-            # --- Evaluation Phase (runs every single epoch) ---
+        def evaluate_and_log(is_final_epoch):
             model.eval()
             with torch.no_grad():
                 for eval_id in range(task_id + 1):
@@ -71,7 +55,7 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
                         pred_cil = output.argmax(dim=1, keepdim=True)
                         correct_cil += pred_cil.eq(target.view_as(pred_cil)).sum().item()
 
-                        # 2. Task-IL Prediction (only when a task->class mapping exists)
+                        # 2. Task-IL Prediction
                         if eval_til:
                             mask = torch.full_like(output, float('-inf'))
                             mask[:, valid_classes] = output[:, valid_classes]
@@ -83,22 +67,41 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
                     acc_cil = correct_cil / total
                     acc_til = correct_til / total if eval_til else None
 
-                    # Log high-resolution data EVERY epoch
-                    evaluator_cil.update_history(global_epoch, eval_id, acc_cil)
+                    # Log high-resolution data EVERY evaluation step
+                    evaluator_cil.update_history(global_step, eval_id, acc_cil)
                     if eval_til:
-                        evaluator_til.update_history(global_epoch, eval_id, acc_til)
+                        evaluator_til.update_history(global_step, eval_id, acc_til)
 
                     # Log standard matrix data ONLY on the final epoch of the task
-                    if epoch == epochs - 1:
+                    if is_final_epoch:
                         evaluator_cil.update_matrix(task_id, eval_id, acc_cil)
                         if eval_til:
                             evaluator_til.update_matrix(task_id, eval_id, acc_til)
                             print(f"  -> [Task Boundary] Eval on Task {eval_id + 1} | CIL: {acc_cil:.4f} | TIL: {acc_til:.4f}")
                         else:
                             print(f"  -> [Task Boundary] Eval on Task {eval_id + 1} | CIL: {acc_cil:.4f}")
+            model.train()
 
-            # Advance absolute time
-            global_epoch += 1
+        # --- Training Phase ---
+        for epoch in range(epochs):
+            model.train() # Make sure to set train mode inside the epoch loop
+
+            for data, target in train_loader:
+                global_step += 1
+                data, target = data.to(device), target.to(device)
+                optimizer.zero_grad()
+                output = model(data)
+                loss = criterion(output, target)
+                loss.backward()
+                optimizer.step()
+                
+                # Check for step-based evaluation
+                if global_step % eval_every == 0:
+                    evaluate_and_log(is_final_epoch=False)
+
+            # At the end of the epoch, trigger final evaluation matrix if it's the last epoch
+            if epoch == epochs - 1:
+                evaluate_and_log(is_final_epoch=True)
 
         # Snapshot the adapted state at the task boundary BEFORE any context
         # reset, so offline analyses (probing, relearning) see the trained weights.
