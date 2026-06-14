@@ -11,12 +11,13 @@ from src.engine.trainer import train_cl_scenario
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Nested Learning Continual Learning Ablation")
-    parser.add_argument('--dataset', type=str, default='split', choices=['split', 'permuted', 'rotating'], help="CL scenario: split (Class-IL), permuted/rotating (Domain-IL)")
+    parser.add_argument('--config', type=str, default='', help="Path to YAML config file")
+    parser.add_argument('--dataset', type=str, default='split', help="CL scenario: split (Class-IL), permuted/rotating (Domain-IL)")
     parser.add_argument('--num_tasks', type=int, default=10, help="Number of tasks for permuted/rotating (split is fixed at 5)")
     parser.add_argument('--angle_step', type=int, default=15, help="[rotating] Rotation angle increment per task (degrees)")
     parser.add_argument('--seed', type=int, default=42, help="Random seed (also derives the permutation sequence)")
-    parser.add_argument('--model', type=str, default='baseline', choices=['baseline', 'scms', 'ncms', 'icms'], help="Architecture to test")
-    parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam'], help="Optimizer to use")
+    parser.add_argument('--model', type=str, default='baseline', help="Architecture to test")
+    parser.add_argument('--optimizer', type=str, default='SGD', help="Optimizer to use")
     parser.add_argument('--epochs', type=int, default=5, help="Epochs per task")
     parser.add_argument('--batch_size', type=int, default=64, help="Batch size")
     parser.add_argument('--lr', type=float, default=1e-3, help="Learning rate")
@@ -28,6 +29,16 @@ def parse_args():
     parser.add_argument('--medium_period', type=int, default=2, help="[ncms] Reset the medium level every N contexts (tasks)")
     parser.add_argument('--reset_mode', type=str, default='meta', choices=['meta', 'random', 'none'], help="[ncms] What to reset fast levels to at context boundaries")
     parser.add_argument('--save_ckpt', type=int, default=1, help="Save model state at each task boundary (needed for probing/relearning analyses)")
+    parser.add_argument('--eval_every', type=int, default=200, help="Evaluate every N steps")
+    
+    args, _ = parser.parse_known_args()
+    if args.config:
+        import yaml
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        if config:
+            parser.set_defaults(**config)
+            
     return parser.parse_args()
 
 def set_seed(seed):
@@ -46,13 +57,13 @@ def print_metrics(title, metrics):
     print(f"Average Forgetting: {metrics['Forgetting']:.4f}")
     print(f"Backward Transfer (BWT): {metrics['BWT']:.4f}")
 
-def main():
-    args = parse_args()
+def run_experiment(args, device):
     set_seed(args.seed)
+    
+    print(f"\n{'='*60}")
+    print(f"Starting Experiment: Dataset={args.dataset} | Model={args.model} | Opt={args.optimizer}")
+    print(f"{'='*60}")
 
-    # Dynamic device selection (supports CUDA and macOS MPS)
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Initializing Experiment on device: {device}")
 
     # 1. Load Data
     tasks_train, tasks_test, task_classes, scenario = get_dataset(
@@ -97,7 +108,8 @@ def main():
         beta3=args.beta3,
         stab=bool(args.stab),
         task_classes=task_classes,
-        ckpt_dir=ckpt_dir
+        ckpt_dir=ckpt_dir,
+        eval_every=args.eval_every
     )
 
     # 4. Report Metrics
@@ -133,6 +145,7 @@ def main():
         "alpha": args.alpha,
         "beta3": args.beta3,
         "epochs": args.epochs,
+        "eval_every": args.eval_every,
         "steps_per_epoch": results['steps_per_epoch'],
         "lr": args.lr,
         "ncms": {"reset_mode": args.reset_mode, "meta_lr": args.meta_lr, "medium_period": args.medium_period} if args.model == 'ncms' else None,
@@ -159,6 +172,43 @@ def main():
     print(f"\n[INFO] Data successfully exported to {metrics_dir}/")
     if ckpt_dir:
         print(f"[INFO] Task-boundary checkpoints saved to {ckpt_dir}/")
+
+def main():
+    args = parse_args()
+    
+    # Dynamic device selection (supports CUDA and macOS MPS)
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Initializing Native Parameter Sweep on device: {device}")
+    
+    # Expand list parameters into a grid
+    import itertools
+    
+    args_dict = vars(args)
+    grid_params = {}
+    
+    for key, value in args_dict.items():
+        if key == 'config': 
+            continue
+        # If the parameter is a list, keep it. Otherwise, wrap it in a list.
+        if isinstance(value, list):
+            grid_params[key] = value
+        else:
+            grid_params[key] = [value]
+            
+    # Generate all combinations (Cartesian product)
+    keys = list(grid_params.keys())
+    values = list(grid_params.values())
+    combinations = list(itertools.product(*values))
+    
+    print(f"Detected {len(combinations)} total experiment configurations to run.")
+    
+    # Execute each experiment sequentially
+    for combo in combinations:
+        exp_args_dict = dict(zip(keys, combo))
+        exp_args = argparse.Namespace(**exp_args_dict)
+        run_experiment(exp_args, device)
+        
+    print("\nAll experiments completed successfully!")
 
 if __name__ == "__main__":
     main()
