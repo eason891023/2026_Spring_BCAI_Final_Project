@@ -5,7 +5,9 @@ from .metrics import CLEvaluator
 from src.optimizers.factory import get_optimizer
 
 def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', epochs=5, lr=1e-3,
-                      f=20, alpha=0.5, beta3=0.9, stab=True, task_classes=None, ckpt_dir=None, eval_every=200):
+                      f=20, alpha=0.5, beta3=0.9, stab=True, task_classes=None, ckpt_dir=None,
+                      eval_every=200, sg_tau=2.0, sg_tmin=1, sg_tmax=None,
+                      sg_ema_rho=0.05, sg_warmup=20):
     """Executes the continual learning loop across all tasks.
 
     task_classes: per-task class lists used for the Task-IL masked evaluation
@@ -17,7 +19,10 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
         and relearning analyses without retraining.
     """
     model = model.to(device)
-    optimizer = get_optimizer(model, opt_name, lr=lr, f=f, stabilize=stab, alpha=alpha, beta3=beta3)
+    optimizer = get_optimizer(
+        model, opt_name, lr=lr, f=f, stabilize=stab, alpha=alpha, beta3=beta3,
+        sg_tau=sg_tau, sg_tmin=sg_tmin, sg_tmax=sg_tmax,
+        sg_ema_rho=sg_ema_rho, sg_warmup=sg_warmup)
     criterion = nn.CrossEntropyLoss()
 
     num_tasks = len(tasks_train)
@@ -101,6 +106,8 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
 
             # At the end of the epoch, trigger final evaluation matrix if it's the last epoch
             if epoch == epochs - 1:
+                if hasattr(optimizer, 'flush'):
+                    optimizer.flush()
                 evaluate_and_log(is_final_epoch=True)
 
         # Snapshot the adapted state at the task boundary BEFORE any context
@@ -119,5 +126,6 @@ def train_cl_scenario(model, tasks_train, tasks_test, device, opt_name='SGD', ep
         'TIL': evaluator_til.compute_metrics() if eval_til else None,
         'evaluator_cil': evaluator_cil,
         'evaluator_til': evaluator_til,
-        'steps_per_epoch': steps_per_epoch
+        'steps_per_epoch': steps_per_epoch,
+        'optimizer_events': optimizer.get_event_log() if hasattr(optimizer, 'get_event_log') else None
     }

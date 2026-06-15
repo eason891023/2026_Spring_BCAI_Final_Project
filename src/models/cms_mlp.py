@@ -41,6 +41,16 @@ class SCMS_MLP(nn.Module):
         output = self.head(slow_features)
         return output
 
+class SGCMS_MLP(SCMS_MLP):
+    """
+    Surprise-Gated CMS.
+
+    The architecture matches SCMS exactly; the difference is in optimizer
+    state. factory.py detects this marker and uses adaptive consolidation for
+    medium/slow memories instead of a fixed update cadence.
+    """
+    surprise_gated = True
+
 class NCMS_MLP(nn.Module):
     """
     Nested Continuum Memory System MLP (NL paper Sec. 7.1, Eq. 72).

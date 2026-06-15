@@ -6,13 +6,13 @@ import os
 import json
 from src.data import get_dataset
 from src.models.baseline import BaselineMLP
-from src.models.cms_mlp import SCMS_MLP, NCMS_MLP, ICMS_MLP
+from src.models.cms_mlp import SCMS_MLP, SGCMS_MLP, NCMS_MLP, ICMS_MLP
 from src.engine.trainer import train_cl_scenario
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Nested Learning Continual Learning Ablation")
     parser.add_argument('--config', type=str, default='', help="Path to YAML config file")
-    parser.add_argument('--dataset', type=str, default='split', help="CL scenario: split (Class-IL), permuted/rotating (Domain-IL)")
+    parser.add_argument('--dataset', type=str, default='split', help="CL scenario: split (Class-IL), permuted/rotating/pacs (Domain-IL)")
     parser.add_argument('--num_tasks', type=int, default=10, help="Number of tasks for permuted/rotating (split is fixed at 5)")
     parser.add_argument('--angle_step', type=int, default=15, help="[rotating] Rotation angle increment per task (degrees)")
     parser.add_argument('--seed', type=int, default=42, help="Random seed (also derives the permutation sequence)")
@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=5, help="Epochs per task")
     parser.add_argument('--batch_size', type=int, default=64, help="Batch size")
     parser.add_argument('--lr', type=float, default=1e-3, help="Learning rate")
-    parser.add_argument('--f', type=int, default=20, help="f for number of inner loop before M3 update outer loop")
+    parser.add_argument('--f', type=int, default=20, help="f for number of inner loop before M3 update outer loop; 0 = average task length")
     parser.add_argument('--alpha', type=float, default=0.5, help="Alpha multiplier for slow memory")
     parser.add_argument('--beta3', type=float, default=0.9, help="Beta3 EMA rate for slow memory")
     parser.add_argument('--stab', type=int, default=1, help="Stabilized Version of multiscale optimizer or not.")
@@ -30,6 +30,11 @@ def parse_args():
     parser.add_argument('--reset_mode', type=str, default='meta', choices=['meta', 'random', 'none'], help="[ncms] What to reset fast levels to at context boundaries")
     parser.add_argument('--save_ckpt', type=int, default=1, help="Save model state at each task boundary (needed for probing/relearning analyses)")
     parser.add_argument('--eval_every', type=int, default=200, help="Evaluate every N steps")
+    parser.add_argument('--sg_tau', type=float, default=2.0, help="[sgcms] Surprise z-score threshold for adaptive consolidation")
+    parser.add_argument('--sg_tmin', type=int, default=1, help="[sgcms] Minimum steps between adaptive consolidations")
+    parser.add_argument('--sg_tmax', type=int, default=0, help="[sgcms] Max steps between consolidations; 0 falls back to each group's f")
+    parser.add_argument('--sg_ema_rho', type=float, default=0.05, help="[sgcms] EMA rate for gradient-norm surprise statistics")
+    parser.add_argument('--sg_warmup', type=int, default=20, help="[sgcms] Steps used to warm up surprise statistics before threshold triggers")
     
     args, _ = parser.parse_known_args()
     if args.config:
@@ -66,7 +71,7 @@ def run_experiment(args, device):
 
 
     # 1. Load Data
-    tasks_train, tasks_test, task_classes, scenario = get_dataset(
+    tasks_train, tasks_test, task_classes, scenario, dataset_info = get_dataset(
         args.dataset,
         batch_size=args.batch_size,
         num_tasks=args.num_tasks,
@@ -74,16 +79,23 @@ def run_experiment(args, device):
         angle_step=args.angle_step
     )
     print(f"Dataset: {args.dataset} ({scenario}) | Tasks: {len(tasks_train)}")
+    print(f"Dataset info: input_size={dataset_info['input_size']} | num_classes={dataset_info['num_classes']}")
+    if args.f <= 0:
+        args.f = int(round(np.mean([len(loader) for loader in tasks_train]) * args.epochs))
+        print(f"[INFO] Auto f set to average task training length: f={args.f}")
 
     # 2. Initialize Architecture
     if args.model == 'baseline':
-        model = BaselineMLP()
+        model = BaselineMLP(input_size=dataset_info['input_size'], num_classes=dataset_info['num_classes'])
     elif args.model == 'scms':
-        model = SCMS_MLP()
+        model = SCMS_MLP(input_size=dataset_info['input_size'], num_classes=dataset_info['num_classes'])
+    elif args.model == 'sgcms':
+        model = SGCMS_MLP(input_size=dataset_info['input_size'], num_classes=dataset_info['num_classes'])
     elif args.model == 'ncms':
-        model = NCMS_MLP(meta_lr=args.meta_lr, medium_period=args.medium_period, reset_mode=args.reset_mode)
+        model = NCMS_MLP(input_size=dataset_info['input_size'], num_classes=dataset_info['num_classes'],
+                         meta_lr=args.meta_lr, medium_period=args.medium_period, reset_mode=args.reset_mode)
     elif args.model == 'icms':
-        model = ICMS_MLP()
+        model = ICMS_MLP(input_size=dataset_info['input_size'], num_classes=dataset_info['num_classes'])
     else:
         raise NotImplementedError("Currently Not implemented to support other model architectures!")
 
@@ -91,6 +103,8 @@ def run_experiment(args, device):
     file_prefix = f"{args.dataset}_{args.model}_{args.optimizer}_f{args.f}_a{args.alpha}_b{args.beta3}_s{args.stab}_sd{args.seed}"
     if args.model == 'ncms':
         file_prefix += f"_r{args.reset_mode}_ml{args.meta_lr}_mp{args.medium_period}"
+    if args.model == 'sgcms':
+        file_prefix += f"_tau{args.sg_tau}_tmin{args.sg_tmin}_tmax{args.sg_tmax}_rho{args.sg_ema_rho}_warm{args.sg_warmup}"
 
     ckpt_dir = os.path.join("data", "results", "checkpoints", file_prefix) if args.save_ckpt else None
 
@@ -109,7 +123,12 @@ def run_experiment(args, device):
         stab=bool(args.stab),
         task_classes=task_classes,
         ckpt_dir=ckpt_dir,
-        eval_every=args.eval_every
+        eval_every=args.eval_every,
+        sg_tau=args.sg_tau,
+        sg_tmin=args.sg_tmin,
+        sg_tmax=args.sg_tmax if args.sg_tmax > 0 else None,
+        sg_ema_rho=args.sg_ema_rho,
+        sg_warmup=args.sg_warmup
     )
 
     # 4. Report Metrics
@@ -148,6 +167,14 @@ def run_experiment(args, device):
         "eval_every": args.eval_every,
         "steps_per_epoch": results['steps_per_epoch'],
         "lr": args.lr,
+        "sgcms": {
+            "tau": args.sg_tau,
+            "tmin": args.sg_tmin,
+            "tmax": args.sg_tmax if args.sg_tmax > 0 else None,
+            "ema_rho": args.sg_ema_rho,
+            "warmup": args.sg_warmup,
+            "num_events": len(results['optimizer_events'] or [])
+        } if args.model == 'sgcms' else None,
         "ncms": {"reset_mode": args.reset_mode, "meta_lr": args.meta_lr, "medium_period": args.medium_period} if args.model == 'ncms' else None,
         "CIL": results['evaluator_cil'].export_summary_dict(),
         "TIL": results['evaluator_til'].export_summary_dict() if results['evaluator_til'] is not None else None
@@ -168,6 +195,12 @@ def run_experiment(args, device):
 
     with open(json_path, 'w') as f:
         json.dump(data_log, f, indent=4)
+
+    if results['optimizer_events'] is not None:
+        events_path = os.path.join(metrics_dir, f"{file_prefix}_events.json")
+        with open(events_path, 'w') as f:
+            json.dump(results['optimizer_events'], f, indent=2)
+        print(f"[INFO] Optimizer trigger events exported to {events_path}")
 
     print(f"\n[INFO] Data successfully exported to {metrics_dir}/")
     if ckpt_dir:

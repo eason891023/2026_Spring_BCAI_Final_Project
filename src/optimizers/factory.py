@@ -31,16 +31,155 @@ class DecoupledOptimizer:
                 # leaving the slower layers to continue accumulating.
                 group['opt'].zero_grad()
 
-def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, beta3=0.9):
+class SurpriseGatedOptimizer:
+    """
+    Commit-on-surprise CMS wrapper for standard PyTorch optimizers.
+
+    Fast memory and heads update every batch. Medium/slow memories keep their
+    own gradient buffers and commit when either gradient-norm surprise exceeds
+    a z-score threshold or a max interval is reached. On surprise, the current
+    spike gradient starts the next buffer instead of being written into the
+    just-committed memory.
+    """
+    def __init__(self, param_groups, opt_class, lr, tau=2.0, tmin=1,
+                 tmax=None, ema_rho=0.05, warmup=20, eps=1e-8):
+        self.groups = []
+        self.step_idx = 0
+        self.event_log = []
+        self.ema_rho = ema_rho
+        self.warmup = warmup
+        self.eps = eps
+
+        for idx, group in enumerate(param_groups):
+            params = list(group['params'])
+            opt = opt_class([{'params': params}], lr=lr)
+            cadence = max(1, group.get('f', 1))
+            gated = bool(group.get('gated', cadence > 1))
+            group_tmax = group.get('tmax', tmax)
+            if group_tmax is None:
+                group_tmax = cadence
+            self.groups.append({
+                'name': group.get('name', f'group{idx}'),
+                'params': params,
+                'opt': opt,
+                'gated': gated,
+                'tau': float(group.get('tau', tau)),
+                'tmin': max(1, int(group.get('tmin', tmin))),
+                'tmax': max(1, int(group_tmax)),
+                'last_commit': 0,
+                'mean': None,
+                'var': 0.0,
+                'count': 0,
+                'buffers': [None for _ in params],
+            })
+
+    def zero_grad(self):
+        for group in self.groups:
+            for p in group['params']:
+                if p.grad is not None:
+                    p.grad.detach_()
+                    p.grad.zero_()
+
+    @staticmethod
+    def _grad_norm(grads):
+        total = 0.0
+        for grad in grads:
+            if grad is not None:
+                total += grad.pow(2).sum().item()
+        return total ** 0.5
+
+    def _commit(self, group, reason, z_score, surprise):
+        has_buffer = any(buf is not None for buf in group['buffers'])
+        if not has_buffer:
+            group['last_commit'] = self.step_idx
+            return
+
+        for param, buf in zip(group['params'], group['buffers']):
+            param.grad = None if buf is None else buf.clone()
+        group['opt'].step()
+        group['opt'].zero_grad()
+        group['buffers'] = [None for _ in group['params']]
+        group['last_commit'] = self.step_idx
+        self.event_log.append({
+            'step': self.step_idx,
+            'group': group['name'],
+            'reason': reason,
+            'z': float(z_score),
+            'surprise': float(surprise),
+        })
+
+    def _update_stats(self, group, surprise):
+        if group['mean'] is None:
+            group['mean'] = surprise
+            group['var'] = 0.0
+        else:
+            delta = surprise - group['mean']
+            group['mean'] = (1.0 - self.ema_rho) * group['mean'] + self.ema_rho * surprise
+            group['var'] = (1.0 - self.ema_rho) * group['var'] + self.ema_rho * delta * delta
+        group['count'] += 1
+
+    def _append_current_grads(self, group, grads):
+        for i, grad in enumerate(grads):
+            if grad is None:
+                continue
+            if group['buffers'][i] is None:
+                group['buffers'][i] = grad.clone()
+            else:
+                group['buffers'][i].add_(grad)
+
+    def step(self, closure=None):
+        self.step_idx += 1
+        for group in self.groups:
+            if not group['gated']:
+                group['opt'].step()
+                group['opt'].zero_grad()
+                continue
+
+            grads = [p.grad.detach().clone() if p.grad is not None else None for p in group['params']]
+            surprise = self._grad_norm(grads)
+            mean = surprise if group['mean'] is None else group['mean']
+            var = group['var']
+            z_score = 0.0 if group['count'] == 0 else (surprise - mean) / ((var + self.eps) ** 0.5)
+            elapsed = self.step_idx - group['last_commit']
+
+            surprise_ready = group['count'] >= self.warmup and elapsed >= group['tmin']
+            surprise_trigger = surprise_ready and z_score > group['tau']
+            max_trigger = elapsed >= group['tmax']
+
+            if surprise_trigger:
+                self._commit(group, 'surprise', z_score, surprise)
+            elif max_trigger:
+                self._commit(group, 'tmax', z_score, surprise)
+
+            self._append_current_grads(group, grads)
+            self._update_stats(group, surprise)
+
+            for param in group['params']:
+                param.grad = None
+
+    def flush(self):
+        for group in self.groups:
+            if group['gated']:
+                self._commit(group, 'flush', 0.0, 0.0)
+
+    def get_event_log(self):
+        return list(self.event_log)
+
+def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, beta3=0.9,
+                  sg_tau=2.0, sg_tmin=1, sg_tmax=None, sg_ema_rho=0.05, sg_warmup=20):
     """Instantiates the requested optimizer."""
     if opt_name == 'SGD':
         if hasattr(model, 'fast_memory') and hasattr(model, 'slow_memory') and hasattr(model, 'medium_memory'):
             param_groups = [
-                {'params': model.fast_memory.parameters(), 'f': 1},
-                {'params': model.medium_memory.parameters(), 'f': max(1, f//2)},
-                {'params': model.slow_memory.parameters(), 'f': f},
-                {'params': model.head.parameters(), 'f': 1}
+                {'name': 'fast', 'params': model.fast_memory.parameters(), 'f': 1, 'gated': False},
+                {'name': 'medium', 'params': model.medium_memory.parameters(), 'f': max(1, f//2), 'gated': True},
+                {'name': 'slow', 'params': model.slow_memory.parameters(), 'f': f, 'gated': True},
+                {'name': 'head', 'params': model.head.parameters(), 'f': 1, 'gated': False}
             ]
+            if getattr(model, 'surprise_gated', False):
+                return SurpriseGatedOptimizer(
+                    param_groups, optim.SGD, lr=lr, tau=sg_tau, tmin=sg_tmin,
+                    tmax=sg_tmax, ema_rho=sg_ema_rho, warmup=sg_warmup)
             return DecoupledOptimizer(param_groups, optim.SGD, lr=lr)
         else:  # FALLBACK FOR BASELINE MODE
             return optim.SGD(model.parameters(), lr=lr)
@@ -62,11 +201,15 @@ def get_optimizer(model, opt_name, lr=1e-3, f=20, stabilize=True, alpha=0.5, bet
     elif opt_name == 'Adam':
         if hasattr(model, 'fast_memory') and hasattr(model, 'slow_memory') and hasattr(model, 'medium_memory'):
             param_groups = [
-                {'params': model.fast_memory.parameters(), 'f': 1},
-                {'params': model.medium_memory.parameters(), 'f': max(1, f//2)},
-                {'params': model.slow_memory.parameters(), 'f': f},
-                {'params': model.head.parameters(), 'f': 1}
+                {'name': 'fast', 'params': model.fast_memory.parameters(), 'f': 1, 'gated': False},
+                {'name': 'medium', 'params': model.medium_memory.parameters(), 'f': max(1, f//2), 'gated': True},
+                {'name': 'slow', 'params': model.slow_memory.parameters(), 'f': f, 'gated': True},
+                {'name': 'head', 'params': model.head.parameters(), 'f': 1, 'gated': False}
             ]
+            if getattr(model, 'surprise_gated', False):
+                return SurpriseGatedOptimizer(
+                    param_groups, optim.Adam, lr=lr, tau=sg_tau, tmin=sg_tmin,
+                    tmax=sg_tmax, ema_rho=sg_ema_rho, warmup=sg_warmup)
             return DecoupledOptimizer(param_groups, optim.Adam, lr=lr)
         else: # FALLBACK FOR BASELINE MODE
             return optim.Adam(model.parameters(), lr=lr)
