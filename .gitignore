@@ -222,6 +222,7 @@ __marimo__/
 !data/results/
 data/results/
 data/MNIST
+data/PACS
 
 # local research notes & papers (never push)
 observation.md

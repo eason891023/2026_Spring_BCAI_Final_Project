@@ -53,7 +53,7 @@ pip install -r requirements.txt
 ### 1. Manual Single Runs
 
 ```bash
-python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "icms", "ncms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam']
+python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "sgcms", "icms", "ncms", "baseline"] --optimizer ['SGD', 'Adam', 'Muon', 'M3', 'M3S', 'MSGD', 'MAdam']
 ```
 
 > Please choose only one option at once from the `[...]` in the options listed above! E.g.: `python main.py --dataset split --model baseline --optimizer SGD`
@@ -65,7 +65,7 @@ python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "icm
 * `--angle_step`: [rotating] Rotation increment per task in degrees. Default: `15`.
 * `--seed`: Random seed; also derives the permutation sequence for `permuted`. Default: `42`.
 * `--save_ckpt`: Save a model snapshot at every task boundary to `data/results/checkpoints/` (required by downstream probing/relearning analyses). Default: `1`.
-* `--model`: The network architecture. Choose `baseline` (Standard monolithic MLP) or `cms` (including three variants: `scms`, `ncms`, and `icms`).
+* `--model`: The network architecture. Choose `baseline` (Standard monolithic MLP) or CMS variants (`scms`, `sgcms`, `ncms`, and `icms`). `sgcms` uses the SCMS architecture with surprise-gated consolidation.
 * `--optimizer`: The optimization engine. Supports standard (`SGD`, `Adam`, `Muon`) and Multi-scale (`M3`, `M3S`, `MSGD`, `MAdam`) algorithms.
 * `--epochs`: Training epochs per task. Default: `5`.
 * `--eval_every`: Evaluate the model every N steps, enabling high-resolution tracking of catastrophic forgetting mid-epoch. Default: `200`.
@@ -79,6 +79,14 @@ python main.py --dataset ["split", "permuted", "rotating"] --model ["scms", "icm
 * `--stab`: The Stabilization Flag. Determines the mathematical behavior of the slow memory accumulation:
   * `1` **(Stabilized - e.g., `M3S`):** Applies an Exponential Moving Average (EMA) decay rate. Higher values safely extend the "memory horizon" by gently decaying older batches without blowing up the buffer size.
   * `0` **(Non-Stabilized - e.g., `M3`):** Uses a direct additive multiplier to perfectly match the literal pseudo-code of the original paper ($M = M + \beta_3 g$). *Warning: This unbounded accumulation can cause infinite memory horizons, gradient explosions, or vanishing effective learning rates over long training sequences.*
+
+**Surprise-Gated CMS Options (`--model sgcms`):**
+* `--sg_tau`: Gradient-norm surprise z-score threshold for adaptive consolidation. Lower values trigger more often. Default: `2.0`.
+* `--sg_tmin`: Minimum number of steps between surprise-triggered consolidations. Default: `1`.
+* `--sg_tmax`: Maximum number of steps between consolidations. `0` falls back to each memory group's fixed cadence (`f//2` for medium, `f` for slow). Default: `0`.
+* `--sg_ema_rho`: EMA rate for the running surprise statistics. Default: `0.05`.
+* `--sg_warmup`: Number of steps used to warm up surprise statistics before threshold triggers are allowed. Default: `20`.
+* Trigger events are exported to `data/results/metrics/*_events.json` for boundary-alignment diagnostics.
 
 > [!NOTE]
 > **Note:** Standard optimizers will automatically utilize a Decoupled Wrapper when paired with the `cms` variant models (including `scms`, `ncms` and `icms`), enforcing the module-wise update frequencies without applying complex momentum math.

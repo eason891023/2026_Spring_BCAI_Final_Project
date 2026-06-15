@@ -1,0 +1,19 @@
+dataset:
+  - "permuted"
+model:
+  - "scms"
+optimizer:
+  - "M3S"
+epochs: 5
+eval_every: 200
+batch_size: 64
+lr: 0.001
+f:
+  - 1000
+  - 2500
+  - 5000
+alpha: 0.5
+beta3: 0.9
+stab: 1
+seed:
+  - 42
